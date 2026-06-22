@@ -24,4 +24,11 @@ async def main():
     )
 )
 
+    print(
+            await tools.book_appointment(
+                "9999999999",
+                "2026-07-01",
+                "10:00"
+            )
+        )
 asyncio.run(main())
