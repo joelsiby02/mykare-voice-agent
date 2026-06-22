@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-dotenv
+supabase
+
+livekit-agents
+livekit-plugins-openai
+livekit-plugins-deepgram
+livekit-plugins-cartesia
+
+openai
+deepgram-sdk
