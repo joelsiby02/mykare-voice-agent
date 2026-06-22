@@ -141,7 +141,7 @@ class HealthcareTools:
         """Fetches the log records of historical and pending bookings linked to this patient identifier."""
         self._publish_metadata_state(intent="RETRIEVE_APPOINTMENTS", phone=phone)
         try:
-            res = supabase.table("appointments").select("*").eq("phone", phone).order("appointement_date").execute()
+            res = supabase.table("appointments").select("*").eq("phone", phone).order("appointment_date").execute()
             if not res.data:
                 return "Zero active appointments found associated with this record."
             summary = [f"Record ID: {a['id']} | Date: {a['appointment_date']} | Slot: {a['appointment_time']} | State: {a['status']}" for a in res.data]

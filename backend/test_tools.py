@@ -31,4 +31,10 @@ async def main():
                 "10:00"
             )
         )
+    
+    print(
+            await tools.retrieve_appointments(
+                "9999999999"
+            )
+        )
 asyncio.run(main())
