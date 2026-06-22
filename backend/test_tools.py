@@ -18,4 +18,10 @@ async def main():
         )
     )
 
+    print(
+    await tools.fetch_slots(
+        "2026-07-01"
+    )
+)
+
 asyncio.run(main())
