@@ -31,7 +31,9 @@ async def book_appointment(phone: str, date_str: str, time_str: str) -> str:
 
 @function_tool
 async def retrieve_appointments(phone: str) -> str:
-    """Fetches all upcoming and past appointment records linked to a phone number."""
+    """Fetches all upcoming and past appointment records linked to a phone number.
+    Returns a formatted list with Record ID, date, time, and status.
+    """
     logger.info(f"TOOL DISPATCH: retrieve_appointments -> {phone}")
     return await db.retrieve_appointments(phone)
 
