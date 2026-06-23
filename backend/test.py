@@ -1,35 +1,27 @@
-# livekit_auth_test.py
-
-import os
 import asyncio
-from dotenv import load_dotenv
-from livekit import api
+from db import HealthcareTools
 
-load_dotenv()
+db = HealthcareTools()
 
 async def main():
-    print("URL =", os.getenv("LIVEKIT_URL"))
-    print("KEY PREFIX =", os.getenv("LIVEKIT_API_KEY")[:6])
 
-    try:
-        lkapi = api.LiveKitAPI(
-            url=os.getenv("LIVEKIT_URL"),
-            api_key=os.getenv("LIVEKIT_API_KEY"),
-            api_secret=os.getenv("LIVEKIT_API_SECRET"),
-        )
+    print("\n=== IDENTIFY USER ===")
+    result = await db.identify_user("9999999999")
+    print(result)
 
-        rooms = await lkapi.room.list_rooms(
-            api.ListRoomsRequest()
-        )
+    print("\n=== REGISTER USER ===")
+    result = await db.register_user(
+        "9999999999",
+        "Joel Sibi"
+    )
+    print(result)
 
-        print("\nSUCCESS")
-        print(rooms)
+    print("\n=== IDENTIFY AGAIN ===")
+    result = await db.identify_user("9999999999")
+    print(result)
 
-        await lkapi.aclose()
-
-    except Exception as e:
-        print("\nFAILED")
-        print(type(e))
-        print(e)
+    print("\n=== FETCH SLOTS ===")
+    result = await db.fetch_slots("2026-06-24")
+    print(result)
 
 asyncio.run(main())

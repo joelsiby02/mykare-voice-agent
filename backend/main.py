@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 # Strict 1.6.2 LiveKit Agents SDK Connection Core Imports
+from livekit import agents
 from livekit.agents import (
     AgentServer, 
     AgentSession, 
@@ -14,8 +15,17 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, deepgram, cartesia
 
-# Import your decorated tools class
-from db import HealthcareTools
+# Import your tools directly
+from tools import (
+    identify_user,
+    register_user,
+    fetch_slots,
+    book_appointment,
+    retrieve_appointments,
+    cancel_appointment,
+    modify_appointment,
+    end_conversation
+)
 
 load_dotenv()
 
@@ -34,68 +44,71 @@ url_env = os.getenv("LIVEKIT_URL", "")
 if url_env.endswith("/agent"):
     os.environ["LIVEKIT_URL"] = url_env.replace("/agent", "")
 
-# Initialize the new 1.6.2 AgentServer process instance
+# Initialize the new 1.6.2 AgentServer process instance exactly like hello.py
 server = AgentServer()
 
-@server.rtc_session()
+class MayaHealthcareAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            instructions="""
+            You are Maya, the warm and concise AI clinical receptionist for Mykare Health. 
+            Your duty is to coordinate patient registrations and schedule appointment records. 
+            
+            Always follow this exact workflow checklist:
+            1. Greet the patient warmly and ask for their mobile phone number to check their profile account.
+            2. Invoke 'identify_user'. If missing, ask for their full name and call 'register_user'.
+            3. Manage slots, view schedules, modify dates, or cancel bookings using your functions.
+            4. When the user indicates they are finished, invoke 'end_conversation'.
+
+            Constraints:
+            - Never guess an appointment ID. Always execute 'retrieve_appointments' first to look up active records.
+            - Keep voice responses under two short sentences to ensure sub-second latency.
+            """,
+            tools=[
+                identify_user,
+                register_user,
+                fetch_slots,
+                book_appointment,
+                retrieve_appointments,
+                cancel_appointment,
+                modify_appointment,
+                end_conversation,
+            ]
+        )
+
+@server.rtc_session(agent_name="maya")
 async def mykare_voice_entrypoint(ctx: JobContext):
-    print(f"--- [KareOS] New Worker Spawned for Room: {ctx.room.name} ---")
-    
-    # Establish connection to LiveKit Cloud WebRTC mesh
+    print("=== [KareOS] JOB RECEIVED ===")
+
     await ctx.connect()
-    print("--- [KareOS] WebRTC Mesh Connected Successfully ---")
+    print("=== [KareOS] CONNECTED TO ROOM ===")
 
-    # Instantiate the tools layer passing our room context for telemetry streaming
-    tools_layer = HealthcareTools(ctx_room=ctx.room)
-
-    system_instructions = (
-        "You are Maya, the warm and concise AI clinical receptionist for Mykare Health. "
-        "Your duty is to coordinate patient registrations and schedule appointment records. "
-        "Always follow this exact workflow checklist:\n"
-        "1. Greet the patient warmly and ask for their mobile phone number to check their profile account.\n"
-        "2. Invoke 'identify_user'. If missing, ask for their full name and call 'register_user'.\n"
-        "3. Manage slots, view schedules, modify dates, or cancel bookings using your functions.\n"
-        "4. When the user indicates they are finished, invoke 'end_conversation'.\n\n"
-        "Constraints:\n"
-        "- Never guess an appointment ID. Always execute 'retrieve_appointments' first to look up active records.\n"
-        "- Keep voice responses under two short sentences to ensure sub-second latency."
-    )
-
-    # Compile our tool instance methods into an array for the LLM
-    active_tools = [
-        tools_layer.identify_user,
-        tools_layer.register_user,
-        tools_layer.fetch_slots,
-        tools_layer.book_appointment,
-        tools_layer.retrieve_appointments,
-        tools_layer.cancel_appointment,
-        tools_layer.modify_appointment,
-        tools_layer.end_conversation,
-    ]
-
-    # Initialize the modern 1.6.2 Agent configuration core
-    healthcare_agent = Agent(
-        instructions=system_instructions,
-        tools=active_tools
-    )
-
-    # Connect our standard STT, LLM, and TTS pipelines to the Session instance
+    # Mirroring your hello.py configuration exactly so it functions perfectly
     session = AgentSession(
-        stt=deepgram.STT(model="nova-2-general"),
-        llm=openai.LLM(model="gpt-4o-mini"),
-        tts=cartesia.TTS(voice_id="e583f69e-acfb-4aa5-85a0-d123ee313cb9") # Clear healthcare voice
+        stt=deepgram.STT(
+            model="nova-3",
+            language="en",
+        ),
+        llm=openai.LLM(
+            model="gpt-4o-mini",
+        ),
+        tts=cartesia.TTS(),
     )
 
-    print("--- [KareOS] Pipeline Assembled. Starting Audio Stream Session... ---")
-    
-    # Start our configured agent within this WebRTC workspace session
-    await session.start(room=ctx.room, agent=healthcare_agent)
-    print("--- [KareOS] Maya Voice Processing Session is Live ---")
+    print("=== [KareOS] STARTING SESSION ===")
 
-    # Instruct Maya to generate her default welcoming speech phrase automatically
+    await session.start(
+        room=ctx.room,
+        agent=MayaHealthcareAgent(),
+    )
+
+    print("=== [KareOS] SESSION STARTED ===")
+
+    # Trigger Maya's initial clinical greeting speech chunk automatically
     await session.generate_reply(
-        instructions="Introduce yourself as Maya from Mykare Health and ask for their phone number to pull up their profile."
+        instructions="Say: Hello, I am Maya from Mykare Health. Can you hear me?"
     )
+    print("=== [KareOS] GREETING SENT ===")
 
 @app.get("/api/token")
 async def fetch_access_token(room: str, identity: str):
