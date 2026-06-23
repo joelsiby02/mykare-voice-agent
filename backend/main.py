@@ -1,21 +1,21 @@
 import os
 import asyncio
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Strict 1.6.2 LiveKit Agents SDK Connection Core Imports
-from livekit import agents
+# LiveKit Agents SDK
 from livekit.agents import (
-    AgentServer, 
-    AgentSession, 
-    Agent, 
-    JobContext, 
+    AgentServer,
+    AgentSession,
+    Agent,
+    JobContext,
     cli
 )
 from livekit.plugins import openai, deepgram, cartesia
 
-# Import your tools directly
+# Import your tools (ensure these are plain async functions or callable tools)
 from tools import (
     identify_user,
     register_user,
@@ -39,31 +39,46 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Overwrite system variables to drop the legacy '/agent' suffix path and force free ports
+# Fix LiveKit URL if it ends with '/agent'
 url_env = os.getenv("LIVEKIT_URL", "")
 if url_env.endswith("/agent"):
     os.environ["LIVEKIT_URL"] = url_env.replace("/agent", "")
 
-# Initialize the new 1.6.2 AgentServer process instance exactly like hello.py
 server = AgentServer()
+
 
 class MayaHealthcareAgent(Agent):
     def __init__(self):
-        super().__init__(
-            instructions="""
-            You are Maya, the warm and concise AI clinical receptionist for Mykare Health. 
-            Your duty is to coordinate patient registrations and schedule appointment records. 
-            
-            Always follow this exact workflow checklist:
-            1. Greet the patient warmly and ask for their mobile phone number to check their profile account.
-            2. Invoke 'identify_user'. If missing, ask for their full name and call 'register_user'.
-            3. Manage slots, view schedules, modify dates, or cancel bookings using your functions.
-            4. When the user indicates they are finished, invoke 'end_conversation'.
+        # ---- NATURAL FLOW: dynamic date and conversational pacing ----
+        # Force IST date for accurate "today" references
+        utc_now = datetime.now(timezone.utc)
+        ist_offset = timedelta(hours=5, minutes=30)
+        ist_now = utc_now + ist_offset
+        current_live_datetime = ist_now.strftime("%A, %B %d, %Y")
 
-            Constraints:
-            - Never guess an appointment ID. Always execute 'retrieve_appointments' first to look up active records.
-            - Keep voice responses under two short sentences to ensure sub-second latency.
-            """,
+        system_instructions = (
+            f"You are Maya, the warm, polite, and natural AI clinical receptionist for Mykare Health. "
+            f"Your duty is to assist patients with scheduling and managing appointment records.\n\n"
+            f"CRITICAL REAL-TIME baseline: Today's absolute date is strictly {current_live_datetime}.\n"
+            f"Compute relative days (like 'tomorrow' or 'day after tomorrow') strictly based on this present baseline year, month, and day.\n\n"
+            "CONVERSATIONAL PACING RULES:\n"
+            "- Conversation Flow: Open with a welcoming clinical greeting and ask how you can help them today. "
+            "DO NOT ask for their mobile phone number or record immediately. Let them state their intent first (e.g., 'I want to book an appointment').\n"
+            "- Account Lookup: Once they ask to book, view, or change an appointment, seamlessly pivot and ask for their mobile number to check their account record.\n"
+            "- Business Hour Validation: If a user selects a time outside our opening hours, or if a database tool logs an output error or slot 'REJECTION', "
+            "read the tool response directly, explain the specific issue to the patient naturally, and pivot to assist them with an alternative available choice.\n\n"
+            "OPERATIONAL WORKFLOW CHECKLIST:\n"
+            "1. Greet the patient and ask how you can help them.\n"
+            "2. When a tool action is implied, collect their phone number and run 'identify_user'. If missing from the database, call 'register_user'.\n"
+            "3. Process slot lookups or booking mutations through your functional layer.\n"
+            "4. Invoke 'end_conversation' only when they explicitly signal they are completely finished.\n\n"
+            "CONSTRAINTS:\n"
+            "- Never guess or invent an appointment ID. Always execute 'retrieve_appointments' first to look up active records.\n"
+            "- Keep voice responses under two short sentences to ensure sub-second latency."
+        )
+
+        super().__init__(
+            instructions=system_instructions,
             tools=[
                 identify_user,
                 register_user,
@@ -76,6 +91,7 @@ class MayaHealthcareAgent(Agent):
             ]
         )
 
+
 @server.rtc_session(agent_name="maya")
 async def mykare_voice_entrypoint(ctx: JobContext):
     print("=== [KareOS] JOB RECEIVED ===")
@@ -83,7 +99,6 @@ async def mykare_voice_entrypoint(ctx: JobContext):
     await ctx.connect()
     print("=== [KareOS] CONNECTED TO ROOM ===")
 
-    # Mirroring your hello.py configuration exactly so it functions perfectly
     session = AgentSession(
         stt=deepgram.STT(
             model="nova-3",
@@ -104,26 +119,25 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    # Trigger Maya's initial clinical greeting speech chunk automatically
+    # Updated greeting: warm, open, and not immediately asking for phone number
     await session.generate_reply(
-        instructions="Say: Hello, I am Maya from Mykare Health. Can you hear me?"
+        instructions="Say: Hello, welcome to Mykare Health. I am Maya, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
+
 @app.get("/api/token")
 async def fetch_access_token(room: str, identity: str):
-    """Generates signed tokens allowing the Next.js frontend to securely tunnel audio into WebRTC rooms."""
     from livekit import api
     token_generator = api.AccessToken(
-        os.getenv("LIVEKIT_API_KEY"), 
+        os.getenv("LIVEKIT_API_KEY"),
         os.getenv("LIVEKIT_API_SECRET")
     ).with_identity(identity).with_name(identity).with_grants(
         api.VideoGrants(room_join=True, room=room)
     )
     return {"token": token_generator.to_jwt()}
 
+
 if __name__ == "__main__":
-    # Force system options to clear local port blocks using clean environmental flags
     os.environ["LIVEKIT_PORT"] = "8082"
-    # Pass the compiled server instance directly to the framework executor
     cli.run_app(server)
