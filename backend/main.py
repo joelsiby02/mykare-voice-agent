@@ -16,7 +16,7 @@ from livekit.agents import (
     JobContext,
     cli
 )
-from livekit.plugins import openai, deepgram, cartesia
+from livekit.plugins import openai, deepgram, cartesia  # keep cartesia import just in case
 
 # Import your tools – also import the global db instance
 from tools import (
@@ -133,7 +133,8 @@ async def mykare_voice_entrypoint(ctx: JobContext):
         llm=openai.LLM(
             model="gpt-4o-mini",
         ),
-        tts=cartesia.TTS(),
+        # ✅ CHANGED: Use OpenAI TTS instead of Cartesia
+        tts=openai.TTS(voice="nova"),  # "nova" matches the agent name!
     )
 
     print("=== [KareOS] STARTING SESSION ===")
@@ -155,7 +156,7 @@ async def mykare_voice_entrypoint(ctx: JobContext):
     )
     print("=== [KareOS] GREETING SENT ===")
 
-    # 🔥 KEEP THE AGENT ALIVE UNTIL THE USER LEAVES
+    # Keep the agent alive until the user leaves
     participant_disconnected = asyncio.Event()
     
     def on_participant_disconnected(participant):
