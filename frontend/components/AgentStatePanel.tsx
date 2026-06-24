@@ -5,7 +5,6 @@ import { CheckCircle2, Clock } from 'lucide-react'
 
 interface AgentStatePanelProps {
   toolCalls: ToolCall[]
-  transcript?: any[] // kept for compatibility, but not displayed
 }
 
 export default function AgentStatePanel({ toolCalls }: AgentStatePanelProps) {

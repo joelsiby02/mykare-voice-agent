@@ -31,7 +31,7 @@ export default function Home() {
   const [callStatus, setCallStatus] = useState<CallStatus>('disconnected')
   const [isMuted, setIsMuted] = useState(false)
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([])
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>([])
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([])  // kept for summary
   const [summary, setSummary] = useState<CallSummary | null>(null)
   const [showSummary, setShowSummary] = useState(false)
   const [isLoadingSummary, setIsLoadingSummary] = useState(false)
@@ -69,7 +69,6 @@ export default function Home() {
         throw new Error('Failed to connect to room')
       }
 
-      // --- Event listeners for debugging ---
       room.on(RoomEvent.Connected, () => {
         console.log('[Frontend] ✅ Room connected successfully')
         setCallStatus('connected')
@@ -88,7 +87,6 @@ export default function Home() {
         console.log('[Frontend] ✅ Reconnected')
       })
 
-      // Listen for when the agent publishes audio
       room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
         console.log('[Frontend] Track subscribed:', track.kind, participant.identity, track.sid)
         if (track.kind === Track.Kind.Audio && participant.isAgent) {
@@ -100,7 +98,6 @@ export default function Home() {
               console.warn('[Frontend] Autoplay blocked, need user interaction', e)
             })
           } else {
-            // fallback
             const newAudio = new Audio()
             newAudio.srcObject = new MediaStream([track.mediaStreamTrack])
             newAudio.play().catch(e => console.warn('[Frontend] Autoplay blocked', e))
@@ -108,33 +105,17 @@ export default function Home() {
         }
       })
 
-      // Enable microphone
       try {
         await room.localParticipant.setMicrophoneEnabled(true)
         console.log('[Frontend] Mic enabled:', room.localParticipant.isMicrophoneEnabled)
         console.log('[Frontend] Audio publications:', room.localParticipant.audioTrackPublications)
       } catch (micError) {
         console.error('[Frontend] Failed to enable microphone:', micError)
-        // Continue anyway
       }
 
-      // --- DEBUG: Listen for any raw data coming from the agent ---
-      room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant: RemoteParticipant) => {
-        try {
-          const decoder = new TextDecoder()
-          const data = JSON.parse(decoder.decode(payload))
-          console.log('[Frontend] 📨 Data received (raw):', data)
-          // If the data has a type 'transcript', we'll handle it in the setupRoomListeners,
-          // but we can also forward it here if needed.
-        } catch (error) {
-          console.error('[Frontend] Error parsing data channel message:', error)
-        }
-      })
-
-      // Also log metadata changes directly
+      // Only listen for metadata (tool calls) – no transcript listener
       room.localParticipant.on('metadataChanged', (metadata: string) => {
-        console.log('[Frontend] 📝 Metadata changed (raw):', metadata)
-        // The setupRoomListeners will also handle this, but we log it here for visibility.
+        console.log('[Frontend] 📝 Metadata changed:', metadata)
         try {
           const payload = JSON.parse(metadata)
           const toolCall: ToolCall = {
@@ -142,38 +123,22 @@ export default function Home() {
             data: payload.extracted_data || {},
             timestamp: Date.now(),
           }
-          // Update UI directly (also done in setupRoomListeners, but this is extra)
           setToolCalls((prev) => [...prev, toolCall])
+          // Also add to transcript for summary (but not displayed)
           setTranscript((prev) => [
             ...prev,
             { speaker: 'System', text: `🔧 Tool called: ${toolCall.toolName}`, timestamp: Date.now() },
           ])
+          transcriptRef.current += `\nSystem: Tool called ${toolCall.toolName}`
         } catch (error) {
           console.error('[Frontend] Error parsing metadata:', error)
         }
       })
 
-      // Setup the official listeners (tool calls and transcript)
-      setupRoomListeners(
-        room,
-        (toolCall: ToolCall) => {
-          console.log('[Frontend] Tool call received (from setup):', toolCall)
-          setToolCalls((prev) => [...prev, toolCall])
-          setTranscript((prev) => [
-            ...prev,
-            { speaker: 'System', text: `🔧 Tool called: ${toolCall.toolName}`, timestamp: Date.now() },
-          ])
-        },
-        (speaker: string, text: string) => {
-          console.log(`[Frontend] Transcript: ${speaker}: ${text}`)
-          const entry: TranscriptEntry = { speaker, text, timestamp: Date.now() }
-          setTranscript((prev) => [...prev, entry])
-          transcriptRef.current += `\n${speaker}: ${text}`
-        }
-      )
+      // Keep only tool calls via metadata – we don't need setupRoomListeners for transcript
+      // We already have the metadata listener above.
 
       roomRef.current = room
-      // Status will be updated by the 'Connected' event
     } catch (error) {
       console.error('[Frontend] Error starting call:', error)
       setCallStatus('error')
@@ -263,7 +228,7 @@ export default function Home() {
               <Avatar isConnected={callStatus === 'connected'} />
             </div>
             <div className="lg:col-span-2">
-              <AgentStatePanel toolCalls={toolCalls} transcript={transcript} />
+              <AgentStatePanel toolCalls={toolCalls} />
             </div>
           </div>
         </div>
@@ -280,7 +245,6 @@ export default function Home() {
         />
       )}
       <Footer />
-      {/* Hidden audio element for agent audio */}
       <audio ref={audioRef} autoPlay style={{ display: 'none' }} />
     </>
   )
