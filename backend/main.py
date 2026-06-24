@@ -106,6 +106,16 @@ class MayaHealthcareAgent(Agent):
         )
 
 
+async def send_transcript(room, speaker: str, text: str):
+    """Publish transcript data to the room's data channel."""
+    try:
+        payload = json.dumps({"type": "transcript", "speaker": speaker, "text": text}).encode()
+        room.local_participant.publish_data(payload)
+        print(f"[Transcript] {speaker}: {text}")
+    except Exception as e:
+        print(f"Error sending transcript: {e}")
+
+
 @server.rtc_session(agent_name="maya")
 async def mykare_voice_entrypoint(ctx: JobContext):
     print("=== [KareOS] JOB RECEIVED ===")
@@ -113,7 +123,7 @@ async def mykare_voice_entrypoint(ctx: JobContext):
     await ctx.connect()
     print("=== [KareOS] CONNECTED TO ROOM ===")
 
-    # ✅ Pass the room to the tools instance so metadata is published (tool calls)
+    # 🔥 CRITICAL: Pass the room to the tools instance so metadata is published
     db.room = ctx.room
 
     session = AgentSession(
@@ -138,15 +148,20 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    # ✅ CORRECT: Use session.generate_reply, not agent.generate_reply
-    await session.generate_reply(
+    # 🔥 Listen for agent responses and send transcripts
+    def on_agent_response(agent_inst, text: str):
+        asyncio.create_task(send_transcript(ctx.room, "Nova", text))
+
+    session.on("agent_response", on_agent_response)
+
+    # Send the greeting – this will also trigger agent_response
+    await agent.generate_reply(
         instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
-    # ✅ KEEP THE AGENT ALIVE – wait for the session to end
+    # 🔥 KEEP THE AGENT ALIVE until the session ends (user leaves or agent ends)
     await session.wait()
-    print("=== [KareOS] SESSION ENDED ===")
 
 
 # ========== ROOT ENDPOINT ==========
@@ -189,7 +204,7 @@ async def fetch_access_token(room: str, identity: str):
     return {"token": token.to_jwt()}
 
 
-# ========== SUMMARY ENDPOINT ==========
+# ========== SUMMARY ENDPOINT (ENHANCED) ==========
 @app.post("/api/summary")
 async def generate_summary(request: Request):
     data = await request.json()
@@ -216,6 +231,7 @@ async def generate_summary(request: Request):
     elif "view" in transcript.lower() or "check" in transcript.lower():
         intent = "retrieve"
 
+    # Build structured summary
     summary_lines = []
     summary_lines.append("📋 **CALL SUMMARY**")
     summary_lines.append(f"🕐 **Timestamp:** {datetime.now().strftime('%Y-%m-%d %I:%M %p')}")
@@ -240,7 +256,7 @@ async def generate_summary(request: Request):
 
     summary_text = "\n".join(summary_lines)
 
-    # Build appointments list
+    # Build appointments list for the modal
     appointments = []
     if date_match and time_match:
         appointments.append({
