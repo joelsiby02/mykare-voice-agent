@@ -1,11 +1,11 @@
 import os
 import asyncio
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from livekit import api
-from fastapi import Request
+import re
 
 # LiveKit Agents SDK
 from livekit.agents import (
@@ -132,8 +132,13 @@ async def mykare_voice_entrypoint(ctx: JobContext):
     print("=== [KareOS] GREETING SENT ===")
 
 
-# ========== FIXED TOKEN ENDPOINT ==========
+# ========== ROOT ENDPOINT ==========
+@app.get("/")
+async def root():
+    return {"message": "Mykare Health AI API is running. Use /api/token to get a LiveKit token."}
 
+
+# ========== TOKEN ENDPOINT ==========
 @app.get("/api/token")
 async def fetch_access_token(room: str, identity: str):
     print("🚀 NEW TOKEN CODE IS RUNNING!")
@@ -173,17 +178,65 @@ async def fetch_access_token(room: str, identity: str):
     return {"token": token.to_jwt()}
 
 
+# ========== SUMMARY ENDPOINT ==========
+# @app.post("/api/summary")
+# async def generate_summary(request: Request):
+#     data = await request.json()
+#     transcript = data.get("transcript", "")
+#     return {
+#         "summary": f"Call ended. Transcript preview: {transcript[:100]}...",
+#         "appointments": [],
+#         "timestamp": datetime.now().isoformat()
+#     }
+
 @app.post("/api/summary")
 async def generate_summary(request: Request):
     data = await request.json()
     transcript = data.get("transcript", "")
+
+    # --- Simple extraction (no LLM) ---
+    name_match = re.search(r"(?:my name is|I am|called)\s+(\w+)", transcript, re.I)
+    phone_match = re.search(r"(\+?\d{10,15})", transcript)
+    date_match = re.search(r"(\d{4}-\d{2}-\d{2})", transcript)
+    time_match = re.search(r"(\d{1,2}:\d{2}\s?(?:AM|PM|am|pm)?)", transcript)
+
+    intent = "unknown"
+    if "book" in transcript.lower():
+        intent = "book"
+    elif "cancel" in transcript.lower():
+        intent = "cancel"
+    elif "modify" in transcript.lower() or "reschedule" in transcript.lower():
+        intent = "modify"
+    elif "view" in transcript.lower() or "check" in transcript.lower():
+        intent = "retrieve"
+
+    summary_lines = []
+    if name_match:
+        summary_lines.append(f"Patient: {name_match.group(1)}")
+    if phone_match:
+        summary_lines.append(f"Phone: {phone_match.group(1)}")
+    if intent != "unknown":
+        summary_lines.append(f"Intent: {intent}")
+    if date_match and time_match:
+        summary_lines.append(f"Appointment: {date_match.group(1)} at {time_match.group(1)}")
+    elif date_match:
+        summary_lines.append(f"Appointment Date: {date_match.group(1)}")
+    elif time_match:
+        summary_lines.append(f"Appointment Time: {time_match.group(1)}")
+    
+    if not summary_lines:
+        summary_lines.append("No key details extracted (call preview below).")
+
+    summary_text = "\n".join(summary_lines)
+    summary_text += f"\n\nTranscript preview: {transcript[:200]}..."
+
     return {
-        "summary": f"Call ended. Transcript preview: {transcript[:100]}...",
-        "appointments": [],
+        "summary": summary_text,
+        "appointments": [],  # could fetch from DB later
         "timestamp": datetime.now().isoformat()
     }
 
-
+# ========== MAIN ENTRY POINT ==========
 if __name__ == "__main__":
     print("=== Starting LiveKit Agent Server (main) ===")
     os.environ["LIVEKIT_PORT"] = "8082"
