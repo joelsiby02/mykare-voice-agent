@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from livekit import api
+from fastapi import Request
 
 # LiveKit Agents SDK
 from livekit.agents import (
@@ -131,27 +133,45 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
 
 # ========== FIXED TOKEN ENDPOINT ==========
-from livekit import api
 
 @app.get("/api/token")
 async def fetch_access_token(room: str, identity: str):
-    token_generator = api.AccessToken(
+    print("🚀 NEW TOKEN CODE IS RUNNING!")
+    token = api.AccessToken(
         os.getenv("LIVEKIT_API_KEY"),
         os.getenv("LIVEKIT_API_SECRET")
-    ).with_identity(identity).with_name(identity).with_grants(
+    )
+    token.with_identity(identity)
+    token.with_name(identity)
+    
+    # 1. Setup standard grants
+    token.with_grants(
         api.VideoGrants(
             room_join=True,
             room=room,
-            # CRITICAL: This tells LiveKit to dispatch the "maya" agent
-            room_config=api.RoomConfiguration(
-                agents=[api.RoomAgentConfiguration(agent_name="maya")]
-            )
         )
     )
-    return {"token": token_generator.to_jwt()}
+    
+    # 2. Explicitly create the configuration objects
+    agent_dispatch = api.RoomAgentDispatch(agent_name="maya")
+    room_config = api.RoomConfiguration(agents=[agent_dispatch])
+    token.with_room_config(room_config)
+    
+    # ─── COMPATIBILITY PATCH FOR SERIALIZATION ───
+    # Force injector to bridge differences between SDK mapping variants
+    try:
+        if hasattr(token.claims, "video") and token.claims.video is not None:
+            # Injecting camelCase structure directly into internal video grants dict
+            token.claims.video.__dict__["room_config"] = room_config
+            token.claims.video.__dict__["roomConfig"] = {
+                "agents": [{"agentName": "maya", "agent_name": "maya"}]
+            }
+    except Exception as e:
+        print(f"Token patch warning skipped: {e}")
+    # ─────────────────────────────────────────────
+    
+    return {"token": token.to_jwt()}
 
-
-from fastapi import Request
 
 @app.post("/api/summary")
 async def generate_summary(request: Request):
