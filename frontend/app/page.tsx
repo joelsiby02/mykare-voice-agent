@@ -51,35 +51,42 @@ export default function Home() {
       setTranscript([])
       transcriptRef.current = ''
 
-      const token = await getAccessToken(
-        'healthcare-assistant',
-        `user-${Date.now()}`
-      )
+      // Room name must match a pattern that has a dispatch rule.
+      // Use 'console-demo' – we'll keep it consistent.
+      const roomName = 'console-demo'
+      const token = await getAccessToken(roomName, `user-${Date.now()}`)
 
       if (!liveKitUrl) {
         throw new Error('LiveKit URL is not configured')
       }
 
-      const room = await connectToRoom(liveKitUrl, token, 'healthcare-assistant', {
+      const room = await connectToRoom(liveKitUrl, token, roomName, {
         audio: true,
         video: false,
       })
 
-      // Setup event listeners
+      if (!room) {
+        throw new Error('Failed to connect to room')
+      }
+
+      // 🔧 FIX: Enable microphone explicitly and log
+      await room.localParticipant.setMicrophoneEnabled(true)
+      console.log('[Mic] enabled:', room.localParticipant.isMicrophoneEnabled)
+      console.log('[Mic] Audio publications:', room.localParticipant.audioTrackPublications)
+
       setupRoomListeners(
         room,
         (toolCall: ToolCall) => {
           console.log('Tool call received:', toolCall)
           setToolCalls((prev) => [...prev, toolCall])
-          transcriptRef.current += `\n[Tool: ${toolCall.toolName}]`
+          setTranscript((prev) => [
+            ...prev,
+            { speaker: 'System', text: `🔧 Tool called: ${toolCall.toolName}`, timestamp: Date.now() },
+          ])
         },
         (speaker: string, text: string) => {
           console.log(`${speaker}: ${text}`)
-          const entry: TranscriptEntry = {
-            speaker,
-            text,
-            timestamp: Date.now(),
-          }
+          const entry: TranscriptEntry = { speaker, text, timestamp: Date.now() }
           setTranscript((prev) => [...prev, entry])
           transcriptRef.current += `\n${speaker}: ${text}`
         }
@@ -103,7 +110,6 @@ export default function Home() {
         roomRef.current = null
       }
 
-      // Fetch summary from backend
       setIsLoadingSummary(true)
       try {
         const callSummary = await getCallSummary(transcriptRef.current)
@@ -111,7 +117,6 @@ export default function Home() {
         setShowSummary(true)
       } catch (error) {
         console.error('Error fetching summary:', error)
-        // Still show a basic summary with what we have
         setSummary({
           summary: 'Call ended. Summary generation failed.',
           appointments: [],
@@ -140,7 +145,6 @@ export default function Home() {
     }
   }, [isMuted])
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (roomRef.current) {
@@ -151,13 +155,8 @@ export default function Home() {
 
   return (
     <>
-      {/* Header */}
       <Header />
-
-      {/* Hero Section */}
       <HeroSection />
-
-      {/* Call Interface Section */}
       <section
         id="call-interface"
         className="py-16 md:py-24 px-6 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800"
@@ -171,12 +170,8 @@ export default function Home() {
               Connect with Nova and experience the future of healthcare scheduling
             </p>
           </div>
-
-          {/* Main Call Interface */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Controls and Avatar */}
             <div className="lg:col-span-1 space-y-6">
-              {/* Call Controls */}
               <CallControls
                 onStartCall={handleStartCall}
                 onEndCall={handleEndCall}
@@ -185,23 +180,15 @@ export default function Home() {
                 isMuted={isMuted}
                 isLoading={isLoadingSummary}
               />
-
-              {/* Avatar Component */}
               <Avatar isConnected={callStatus === 'connected'} />
             </div>
-
-            {/* Right Column - Agent State Panel */}
             <div className="lg:col-span-2">
               <AgentStatePanel toolCalls={toolCalls} transcript={transcript} />
             </div>
           </div>
         </div>
       </section>
-
-      {/* Portfolio Section */}
       <PortfolioSection />
-
-      {/* Summary Modal */}
       {showSummary && (
         <SummaryCard
           summary={summary}
@@ -212,8 +199,6 @@ export default function Home() {
           }}
         />
       )}
-
-      {/* Footer */}
       <Footer />
     </>
   )
