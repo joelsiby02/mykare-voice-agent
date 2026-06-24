@@ -58,7 +58,7 @@ class MayaHealthcareAgent(Agent):
         current_live_datetime = ist_now.strftime("%A, %B %d, %Y")
 
         system_instructions = (
-            f"You are Maya, the warm, polite, and natural AI clinical receptionist for Mykare Health. "
+            f"You are Nova, the warm, polite, and natural AI clinical receptionist for Mykare Health. "
             f"Your duty is to assist patients with scheduling and managing appointment records.\n\n"
             f"CRITICAL REAL-TIME baseline: Today's absolute date is strictly {current_live_datetime}.\n"
             f"Compute relative days (like 'tomorrow' or 'day after tomorrow') strictly based on this present baseline year, month, and day.\n\n"
@@ -80,6 +80,12 @@ class MayaHealthcareAgent(Agent):
             "   c) If multiple appointments exist, ask the patient to specify which one (by date/time) they want to change.\n"
             "   d) Once you have the specific appointment ID, call 'cancel_appointment(appointment_id)' or 'modify_appointment(appointment_id, new_date, new_time)'.\n"
             "   e) Never guess or invent an appointment ID – always obtain it from the retrieval result.\n\n"
+            "--- CONVERSATIONAL PRECISION RULES ---\n"
+            "- When a patient gives a phone number or name, repeat it back with the correct spelling/numberization and ask for confirmation.\n"
+            "- If a number is unclear, politely say: 'I'm sorry, could you please repeat that?'\n"
+            "- Be gentle, empathetic, and patient - if a patient seems confused, offer to repeat information.\n"
+            "- Always confirm: 'Let me confirm, your phone number is ...' before booking.\n"
+            "- If the patient spells out their name, reply with the full name spelled correctly.\n\n"
             "CONSTRAINTS:\n"
             "- Keep voice responses under two short sentences to ensure sub-second latency."
         )
@@ -126,8 +132,9 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
+    # ✅ GREETING UPDATED TO "Nova"
     await session.generate_reply(
-        instructions="Say: Hello, welcome to Mykare Health. I am Maya, your automated care coordinator. How can I help you today?"
+        instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
@@ -163,10 +170,8 @@ async def fetch_access_token(room: str, identity: str):
     token.with_room_config(room_config)
     
     # ─── COMPATIBILITY PATCH FOR SERIALIZATION ───
-    # Force injector to bridge differences between SDK mapping variants
     try:
         if hasattr(token.claims, "video") and token.claims.video is not None:
-            # Injecting camelCase structure directly into internal video grants dict
             token.claims.video.__dict__["room_config"] = room_config
             token.claims.video.__dict__["roomConfig"] = {
                 "agents": [{"agentName": "maya", "agent_name": "maya"}]
@@ -178,32 +183,28 @@ async def fetch_access_token(room: str, identity: str):
     return {"token": token.to_jwt()}
 
 
-# ========== SUMMARY ENDPOINT ==========
-# @app.post("/api/summary")
-# async def generate_summary(request: Request):
-#     data = await request.json()
-#     transcript = data.get("transcript", "")
-#     return {
-#         "summary": f"Call ended. Transcript preview: {transcript[:100]}...",
-#         "appointments": [],
-#         "timestamp": datetime.now().isoformat()
-#     }
-
+# ========== SUMMARY ENDPOINT (ENHANCED) ==========
 @app.post("/api/summary")
 async def generate_summary(request: Request):
     data = await request.json()
     transcript = data.get("transcript", "")
 
-    # --- Simple extraction (no LLM) ---
-    name_match = re.search(r"(?:my name is|I am|called)\s+(\w+)", transcript, re.I)
-    phone_match = re.search(r"(\+?\d{10,15})", transcript)
+    # --- Enhanced extraction with better regex ---
+    name_match = re.search(r"(?:my name is|I am|called|name['']s?)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)", transcript, re.I)
+    phone_match = re.search(r"(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4,10}", transcript)
     date_match = re.search(r"(\d{4}-\d{2}-\d{2})", transcript)
     time_match = re.search(r"(\d{1,2}:\d{2}\s?(?:AM|PM|am|pm)?)", transcript)
+    
+    # Try to extract date in natural language
+    if not date_match:
+        date_match = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})[,']?\s*(\d{4})?", transcript, re.I)
+        if date_match:
+            date_match = date_match.group(0)
 
     intent = "unknown"
     if "book" in transcript.lower():
         intent = "book"
-    elif "cancel" in transcript.lower():
+    elif "cancel" in transcript.lower() or "cancel appointment" in transcript.lower():
         intent = "cancel"
     elif "modify" in transcript.lower() or "reschedule" in transcript.lower():
         intent = "modify"
@@ -212,29 +213,28 @@ async def generate_summary(request: Request):
 
     summary_lines = []
     if name_match:
-        summary_lines.append(f"Patient: {name_match.group(1)}")
+        summary_lines.append(f"👤 Patient: {name_match.group(1)}")
     if phone_match:
-        summary_lines.append(f"Phone: {phone_match.group(1)}")
+        summary_lines.append(f"📞 Phone: {phone_match.group(0)}")
     if intent != "unknown":
-        summary_lines.append(f"Intent: {intent}")
-    if date_match and time_match:
-        summary_lines.append(f"Appointment: {date_match.group(1)} at {time_match.group(1)}")
-    elif date_match:
-        summary_lines.append(f"Appointment Date: {date_match.group(1)}")
-    elif time_match:
-        summary_lines.append(f"Appointment Time: {time_match.group(1)}")
+        summary_lines.append(f"🎯 Intent: {intent.upper()}")
+    if date_match:
+        summary_lines.append(f"📅 Date: {date_match}")
+    if time_match:
+        summary_lines.append(f"🕐 Time: {time_match.group(0)}")
     
     if not summary_lines:
-        summary_lines.append("No key details extracted (call preview below).")
+        summary_lines.append("ℹ️ No key details extracted. Transcript preview below:")
 
     summary_text = "\n".join(summary_lines)
-    summary_text += f"\n\nTranscript preview: {transcript[:200]}..."
+    summary_text += f"\n\n📝 Transcript preview:\n{transcript[:500]}..."
 
     return {
         "summary": summary_text,
-        "appointments": [],  # could fetch from DB later
+        "appointments": [],
         "timestamp": datetime.now().isoformat()
     }
+
 
 # ========== MAIN ENTRY POINT ==========
 if __name__ == "__main__":

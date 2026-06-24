@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import logging
 from datetime import datetime, timedelta, timezone
 from supabase import create_client, Client
@@ -25,9 +26,7 @@ class HealthcareTools:
         return (utc_now + ist_offset).date()
 
     def _sanitize_date(self, date_str: str) -> str:
-        """
-        Force the year to 2026 if the LLM provides an incorrect one.
-        """
+        """Force the year to 2026 if the LLM provides an incorrect one."""
         try:
             parts = date_str.split("-")
             if len(parts) == 3 and parts[0] != "2026":
@@ -37,6 +36,47 @@ class HealthcareTools:
         except Exception as e:
             logger.error(f"Failed to sanitize date string: {e}")
             return date_str
+
+    def _format_time(self, time_str: str) -> str:
+        """Convert 24-hour time (HH:MM) to 12-hour format (HH:MM AM/PM)."""
+        try:
+            hour = int(time_str.split(":")[0])
+            minute = time_str.split(":")[1]
+            period = "AM" if hour < 12 else "PM"
+            hour_12 = hour % 12
+            if hour_12 == 0:
+                hour_12 = 12
+            return f"{hour_12}:{minute} {period}"
+        except:
+            return time_str
+
+    # ========== EDGE-CASE VALIDATION HELPERS ==========
+    def _validate_phone(self, phone: str) -> bool:
+        """
+        Validate that the phone number is a valid 10-digit Indian number.
+        Strips non-digit characters, checks length == 10 and all digits.
+        """
+        if not phone:
+            return False
+        cleaned = re.sub(r'\D', '', phone)  # remove non-digits
+        return len(cleaned) == 10 and cleaned.isdigit()
+
+    def _validate_inputs(self, phone: str = None, name: str = None, 
+                         date_str: str = None, time_str: str = None) -> str:
+        """
+        Check required fields and return a rejection message if any is missing or empty.
+        Returns None if all present.
+        """
+        if phone is not None and not phone.strip():
+            return "Phone number is required. Please ask the patient to provide their 10-digit phone number."
+        if name is not None and not name.strip():
+            return "Full name is required. Please ask the patient to provide their full name."
+        if date_str is not None and not date_str.strip():
+            return "Appointment date is required. Please ask the patient to provide a valid date (YYYY-MM-DD)."
+        if time_str is not None and not time_str.strip():
+            return "Appointment time is required. Please ask the patient to provide a valid time."
+        return None
+    # ================================================
 
     def _publish_metadata_state(self, intent: str, name: str = "None", phone: str = "None",
                                 date: str = "None", time: str = "None"):
@@ -58,6 +98,11 @@ class HealthcareTools:
             logger.error(f"Failed to publish track metadata: {e}")
 
     async def identify_user(self, phone: str) -> str:
+        # --- Edge case: invalid phone ---
+        if not self._validate_phone(phone):
+            logger.warning(f"Invalid phone number received: {phone}")
+            return "REJECTION: The phone number provided is not a valid 10-digit number. Please ask the patient to provide their full 10-digit phone number."
+
         logger.info(f"[EXECUTION] identify_user triggered -> {phone}")
         self._publish_metadata_state(intent="IDENTIFY_USER", phone=phone)
         try:
@@ -71,6 +116,15 @@ class HealthcareTools:
             return f"System error identifying user: {str(e)}"
 
     async def register_user(self, phone: str, name: str) -> str:
+        # --- Edge cases: invalid phone, missing name ---
+        if not self._validate_phone(phone):
+            logger.warning(f"Invalid phone for registration: {phone}")
+            return "REJECTION: Invalid phone number. Please ask the patient to provide a valid 10-digit phone number."
+        missing = self._validate_inputs(name=name)
+        if missing:
+            logger.warning(f"Registration missing field: {missing}")
+            return "REJECTION: " + missing
+
         logger.info(f"[EXECUTION] register_user triggered -> {phone}, {name}")
         self._publish_metadata_state(intent="REGISTER_USER", name=name, phone=phone)
         try:
@@ -84,12 +138,17 @@ class HealthcareTools:
             return f"Registration failed: {str(e)}"
 
     async def fetch_slots(self, date_str: str) -> str:
+        # --- Edge case: missing date ---
+        missing = self._validate_inputs(date_str=date_str)
+        if missing:
+            logger.warning(f"fetch_slots missing date: {date_str}")
+            return "REJECTION: " + missing
+
         date_str = self._sanitize_date(date_str)
         logger.info(f"[EXECUTION] fetch_slots triggered -> {date_str}")
         self._publish_metadata_state(intent="FETCH_SLOTS", date=date_str)
 
         try:
-            # Validate date is not in the past
             try:
                 input_date = datetime.strptime(date_str, "%Y-%m-%d").date()
                 today_ist = self._get_ist_date()
@@ -115,12 +174,24 @@ class HealthcareTools:
             available = [slot for slot in all_slots if slot not in booked_times]
             if not available:
                 return f"Notice: All appointments for {date_str} are fully booked. Ask the patient for another date."
-            return (f"Open slots available on date {date_str}: {', '.join(available)}. "
+            
+            # Format available slots to AM/PM
+            available_formatted = [self._format_time(slot) for slot in available]
+            return (f"Open slots available on date {date_str}: {', '.join(available_formatted)}. "
                     "If the user picks a time outside this list, remind them of our opening slots.")
         except Exception as e:
             return f"System error pulling availability: {str(e)}"
 
     async def book_appointment(self, phone: str, date_str: str, time_str: str) -> str:
+        # --- Edge cases: phone length, missing fields ---
+        if not self._validate_phone(phone):
+            logger.warning(f"Invalid phone for booking: {phone}")
+            return "REJECTION: Invalid phone number. Please ask the patient to provide a valid 10-digit phone number."
+        missing = self._validate_inputs(phone=phone, date_str=date_str, time_str=time_str)
+        if missing:
+            logger.warning(f"Booking missing field: {missing}")
+            return "REJECTION: " + missing
+
         date_str = self._sanitize_date(date_str)
         logger.info(f"[EXECUTION] book_appointment triggered -> {phone}, {date_str}, {time_str}")
         self._publish_metadata_state(intent="BOOK_APPOINTMENT", phone=phone, date=date_str, time=time_str)
@@ -167,6 +238,11 @@ class HealthcareTools:
             return f"Booking execution failure: {str(e)}"
 
     async def retrieve_appointments(self, phone: str) -> str:
+        # --- Edge case: invalid phone ---
+        if not self._validate_phone(phone):
+            logger.warning(f"Invalid phone for retrieval: {phone}")
+            return "REJECTION: Invalid phone number. Please ask the patient to provide their 10-digit phone number."
+
         logger.info(f"[EXECUTION] retrieve_appointments triggered -> {phone}")
         self._publish_metadata_state(intent="RETRIEVE_APPOINTMENTS", phone=phone)
         try:
@@ -198,6 +274,13 @@ class HealthcareTools:
             return f"Cancellation pipeline error: {str(e)}"
 
     async def modify_appointment(self, appointment_id: int, new_date: str, new_time: str) -> str:
+        # --- Edge cases: missing fields, invalid phone (optional) ---
+        # We don't have phone here, but we can validate date/time presence.
+        missing = self._validate_inputs(date_str=new_date, time_str=new_time)
+        if missing:
+            logger.warning(f"Modify missing field: {missing}")
+            return "REJECTION: " + missing
+
         new_date = self._sanitize_date(new_date)
         logger.info(f"[EXECUTION] modify_appointment triggered -> {appointment_id}, {new_date}, {new_time}")
         self._publish_metadata_state(intent="MODIFY_APPOINTMENT", date=new_date, time=new_time)
