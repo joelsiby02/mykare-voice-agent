@@ -106,16 +106,6 @@ class MayaHealthcareAgent(Agent):
         )
 
 
-async def send_transcript(room, speaker: str, text: str):
-    """Publish transcript data to the room's data channel."""
-    try:
-        payload = json.dumps({"type": "transcript", "speaker": speaker, "text": text}).encode()
-        room.local_participant.publish_data(payload)
-        print(f"[Transcript] {speaker}: {text}")
-    except Exception as e:
-        print(f"Error sending transcript: {e}")
-
-
 @server.rtc_session(agent_name="maya")
 async def mykare_voice_entrypoint(ctx: JobContext):
     print("=== [KareOS] JOB RECEIVED ===")
@@ -148,20 +138,15 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    # 🔥 Listen for agent responses and send transcripts
-    def on_agent_response(agent_inst, text: str):
-        asyncio.create_task(send_transcript(ctx.room, "Nova", text))
-
-    session.on("agent_response", on_agent_response)
-
-    # ✅ FIX: Use session.generate_reply with text= instead of instructions=
+    # Send the greeting – use instructions= (this was working before)
     await session.generate_reply(
-        text="Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
+        instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
     # 🔥 KEEP THE AGENT ALIVE until the session ends (user leaves or agent ends)
     await session.wait()
+    print("=== [KareOS] SESSION ENDED ===")
 
 
 # ========== ROOT ENDPOINT ==========
