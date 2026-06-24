@@ -1,11 +1,12 @@
 import os
 import asyncio
+import json
+import re
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from livekit import api
-import re
 
 # LiveKit Agents SDK
 from livekit.agents import (
@@ -17,7 +18,7 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, deepgram, cartesia
 
-# Import your tools
+# Import your tools – also import the global db instance
 from tools import (
     identify_user,
     register_user,
@@ -26,7 +27,8 @@ from tools import (
     retrieve_appointments,
     cancel_appointment,
     modify_appointment,
-    end_conversation
+    end_conversation,
+    db   # <-- IMPORT the global db instance so we can set its room
 )
 
 load_dotenv()
@@ -105,12 +107,26 @@ class MayaHealthcareAgent(Agent):
         )
 
 
+# ========== TRANSCRIPT HELPER ==========
+async def send_transcript(room, speaker: str, text: str):
+    """Publish transcript data to the room's data channel."""
+    try:
+        payload = json.dumps({"type": "transcript", "speaker": speaker, "text": text}).encode()
+        room.local_participant.publish_data(payload)
+        print(f"[Transcript] {speaker}: {text}")
+    except Exception as e:
+        print(f"Error sending transcript: {e}")
+
+
 @server.rtc_session(agent_name="maya")
 async def mykare_voice_entrypoint(ctx: JobContext):
     print("=== [KareOS] JOB RECEIVED ===")
 
     await ctx.connect()
     print("=== [KareOS] CONNECTED TO ROOM ===")
+
+    # 🔥 CRITICAL: Pass the room to the tools instance so metadata is published
+    db.room = ctx.room
 
     session = AgentSession(
         stt=deepgram.STT(
@@ -120,13 +136,7 @@ async def mykare_voice_entrypoint(ctx: JobContext):
         llm=openai.LLM(
             model="gpt-4o-mini",
         ),
-        # tts=cartesia.TTS(
-
-        # ),
-        tts=openai.TTS(
-        model="tts-1",
-        voice="alloy" # Options: alloy, echo, fable, onyx, nova, shimmer
-    ),
+        tts=cartesia.TTS(),
     )
 
     print("=== [KareOS] STARTING SESSION ===")
@@ -138,11 +148,20 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    # ✅ GREETING UPDATED TO "Nova"
+    # 🔥 Listen for agent responses and send them to the frontend
+    def on_agent_response(agent, text: str):
+        asyncio.create_task(send_transcript(ctx.room, "Nova", text))
+
+    session.on("agent_response", on_agent_response)
+
+    # Send the greeting – this will also trigger the transcript event
     await session.generate_reply(
         instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
+
+    # Keep the session alive until the participant leaves
+    await session.wait()
 
 
 # ========== ROOT ENDPOINT ==========
@@ -162,7 +181,6 @@ async def fetch_access_token(room: str, identity: str):
     token.with_identity(identity)
     token.with_name(identity)
     
-    # 1. Setup standard grants
     token.with_grants(
         api.VideoGrants(
             room_join=True,
@@ -170,12 +188,11 @@ async def fetch_access_token(room: str, identity: str):
         )
     )
     
-    # 2. Explicitly create the configuration objects
     agent_dispatch = api.RoomAgentDispatch(agent_name="maya")
     room_config = api.RoomConfiguration(agents=[agent_dispatch])
     token.with_room_config(room_config)
     
-    # ─── COMPATIBILITY PATCH FOR SERIALIZATION ───
+    # Compatibility patch
     try:
         if hasattr(token.claims, "video") and token.claims.video is not None:
             token.claims.video.__dict__["room_config"] = room_config
@@ -184,7 +201,6 @@ async def fetch_access_token(room: str, identity: str):
             }
     except Exception as e:
         print(f"Token patch warning skipped: {e}")
-    # ─────────────────────────────────────────────
     
     return {"token": token.to_jwt()}
 
@@ -195,13 +211,12 @@ async def generate_summary(request: Request):
     data = await request.json()
     transcript = data.get("transcript", "")
 
-    # --- Enhanced extraction with better regex ---
+    # Enhanced extraction
     name_match = re.search(r"(?:my name is|I am|called|name['']s?)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)", transcript, re.I)
     phone_match = re.search(r"(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4,10}", transcript)
     date_match = re.search(r"(\d{4}-\d{2}-\d{2})", transcript)
     time_match = re.search(r"(\d{1,2}:\d{2}\s?(?:AM|PM|am|pm)?)", transcript)
     
-    # Try to extract date in natural language
     if not date_match:
         date_match = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})[,']?\s*(\d{4})?", transcript, re.I)
         if date_match:
