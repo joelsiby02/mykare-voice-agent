@@ -7,7 +7,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from livekit import api
-from typing import Optional, Callable, Awaitable
 
 # LiveKit Agents SDK
 from livekit.agents import (
@@ -53,9 +52,7 @@ server = AgentServer()
 
 
 class MayaHealthcareAgent(Agent):
-    def __init__(self, on_response_callback: Optional[Callable[[str], Awaitable[None]]] = None):
-        self._on_response = on_response_callback
-
+    def __init__(self):
         utc_now = datetime.now(timezone.utc)
         ist_offset = timedelta(hours=5, minutes=30)
         ist_now = utc_now + ist_offset
@@ -108,13 +105,6 @@ class MayaHealthcareAgent(Agent):
             ]
         )
 
-    async def generate_reply(self, *, instructions: str) -> str:
-        """Override to capture the response text and send transcript."""
-        response = await super().generate_reply(instructions=instructions)
-        if self._on_response:
-            await self._on_response(response)
-        return response
-
 
 async def send_transcript(room, speaker: str, text: str):
     """Publish transcript data to the room's data channel."""
@@ -133,13 +123,8 @@ async def mykare_voice_entrypoint(ctx: JobContext):
     await ctx.connect()
     print("=== [KareOS] CONNECTED TO ROOM ===")
 
+    # 🔥 CRITICAL: Pass the room to the tools instance so metadata is published
     db.room = ctx.room
-
-    # Define the callback that will be called when the agent responds
-    async def on_agent_response(text: str):
-        await send_transcript(ctx.room, "Nova", text)
-
-    agent = MayaHealthcareAgent(on_response_callback=on_agent_response)
 
     session = AgentSession(
         stt=deepgram.STT(
@@ -154,6 +139,8 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] STARTING SESSION ===")
 
+    agent = MayaHealthcareAgent()
+
     await session.start(
         room=ctx.room,
         agent=agent,
@@ -161,19 +148,19 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    # 🔥 TEST: Send a test transcript 2 seconds after connection to verify data channel
-    async def send_test_transcript():
-        await asyncio.sleep(2)
-        await send_transcript(ctx.room, "System", "✅ Data channel is working")
-    asyncio.create_task(send_test_transcript())
+    # 🔥 Listen for agent responses and send transcripts
+    def on_agent_response(agent_inst, text: str):
+        asyncio.create_task(send_transcript(ctx.room, "Nova", text))
 
-    # The greeting will be sent via the overridden generate_reply
+    session.on("agent_response", on_agent_response)
+
+    # Send the greeting – this will also trigger agent_response
     await agent.generate_reply(
         instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
-    # 🔥 KEEP THE AGENT ALIVE – wait for the session to end (user leaves or agent ends)
+    # 🔥 KEEP THE AGENT ALIVE until the session ends (user leaves or agent ends)
     await session.wait()
 
 
@@ -217,12 +204,13 @@ async def fetch_access_token(room: str, identity: str):
     return {"token": token.to_jwt()}
 
 
-# ========== SUMMARY ENDPOINT ==========
+# ========== SUMMARY ENDPOINT (ENHANCED) ==========
 @app.post("/api/summary")
 async def generate_summary(request: Request):
     data = await request.json()
     transcript = data.get("transcript", "")
 
+    # Enhanced extraction
     name_match = re.search(r"(?:my name is|I am|called|name['']s?)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)", transcript, re.I)
     phone_match = re.search(r"(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4,10}", transcript)
     date_match = re.search(r"(\d{4}-\d{2}-\d{2})", transcript)
@@ -243,27 +231,43 @@ async def generate_summary(request: Request):
     elif "view" in transcript.lower() or "check" in transcript.lower():
         intent = "retrieve"
 
+    # Build structured summary
     summary_lines = []
-    if name_match:
-        summary_lines.append(f"👤 Patient: {name_match.group(1)}")
-    if phone_match:
-        summary_lines.append(f"📞 Phone: {phone_match.group(0)}")
-    if intent != "unknown":
-        summary_lines.append(f"🎯 Intent: {intent.upper()}")
-    if date_match:
-        summary_lines.append(f"📅 Date: {date_match}")
-    if time_match:
-        summary_lines.append(f"🕐 Time: {time_match.group(0)}")
+    summary_lines.append("📋 **CALL SUMMARY**")
+    summary_lines.append(f"🕐 **Timestamp:** {datetime.now().strftime('%Y-%m-%d %I:%M %p')}")
+    summary_lines.append("")
     
-    if not summary_lines:
-        summary_lines.append("ℹ️ No key details extracted. Transcript preview below:")
+    if name_match:
+        summary_lines.append(f"👤 **Patient:** {name_match.group(1)}")
+    if phone_match:
+        summary_lines.append(f"📞 **Phone:** {phone_match.group(0)}")
+    if intent != "unknown":
+        summary_lines.append(f"🎯 **Intent:** {intent.upper()}")
+    if date_match:
+        summary_lines.append(f"📅 **Appointment Date:** {date_match}")
+    if time_match:
+        summary_lines.append(f"🕐 **Appointment Time:** {time_match.group(0)}")
+    
+    if not name_match and not phone_match:
+        summary_lines.append("⚠️ No patient details were captured in this conversation.")
+    
+    summary_lines.append("")
+    summary_lines.append(f"📝 **Transcript preview:**\n{transcript[:300]}...")
 
     summary_text = "\n".join(summary_lines)
-    summary_text += f"\n\n📝 Transcript preview:\n{transcript[:500]}..."
 
+    # Build appointments list for the modal
+    appointments = []
+    if date_match and time_match:
+        appointments.append({
+            "date": date_match if isinstance(date_match, str) else date_match.group(0),
+            "time": time_match.group(0) if time_match else "TBD",
+            "type": "Appointment"
+        })
+    
     return {
         "summary": summary_text,
-        "appointments": [],
+        "appointments": appointments,
         "timestamp": datetime.now().isoformat()
     }
 
