@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from livekit import api
+from typing import Optional, Callable, Awaitable
 
 # LiveKit Agents SDK
 from livekit.agents import (
@@ -16,7 +17,7 @@ from livekit.agents import (
     JobContext,
     cli
 )
-from livekit.plugins import openai, deepgram, cartesia  # keep cartesia import just in case
+from livekit.plugins import openai, deepgram
 
 # Import your tools – also import the global db instance
 from tools import (
@@ -52,7 +53,9 @@ server = AgentServer()
 
 
 class MayaHealthcareAgent(Agent):
-    def __init__(self):
+    def __init__(self, on_response_callback: Optional[Callable[[str], Awaitable[None]]] = None):
+        self._on_response = on_response_callback
+
         utc_now = datetime.now(timezone.utc)
         ist_offset = timedelta(hours=5, minutes=30)
         ist_now = utc_now + ist_offset
@@ -105,6 +108,13 @@ class MayaHealthcareAgent(Agent):
             ]
         )
 
+    async def generate_reply(self, *, instructions: str) -> str:
+        """Override to capture the response text and send transcript."""
+        response = await super().generate_reply(instructions=instructions)
+        if self._on_response:
+            await self._on_response(response)
+        return response
+
 
 async def send_transcript(room, speaker: str, text: str):
     """Publish transcript data to the room's data channel."""
@@ -125,6 +135,12 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     db.room = ctx.room
 
+    # Define the callback that will be called when the agent responds
+    async def on_agent_response(text: str):
+        await send_transcript(ctx.room, "Nova", text)
+
+    agent = MayaHealthcareAgent(on_response_callback=on_agent_response)
+
     session = AgentSession(
         stt=deepgram.STT(
             model="nova-3",
@@ -133,41 +149,32 @@ async def mykare_voice_entrypoint(ctx: JobContext):
         llm=openai.LLM(
             model="gpt-4o-mini",
         ),
-        # ✅ CHANGED: Use OpenAI TTS instead of Cartesia
-        tts=openai.TTS(voice="nova"),  # "nova" matches the agent name!
+        tts=openai.TTS(voice="nova"),
     )
 
     print("=== [KareOS] STARTING SESSION ===")
 
     await session.start(
         room=ctx.room,
-        agent=MayaHealthcareAgent(),
+        agent=agent,
     )
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    def on_agent_response(agent, text: str):
-        asyncio.create_task(send_transcript(ctx.room, "Nova", text))
+    # 🔥 TEST: Send a test transcript 2 seconds after connection to verify data channel
+    async def send_test_transcript():
+        await asyncio.sleep(2)
+        await send_transcript(ctx.room, "System", "✅ Data channel is working")
+    asyncio.create_task(send_test_transcript())
 
-    session.on("agent_response", on_agent_response)
-
-    await session.generate_reply(
+    # The greeting will be sent via the overridden generate_reply
+    await agent.generate_reply(
         instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
-    # Keep the agent alive until the user leaves
-    participant_disconnected = asyncio.Event()
-    
-    def on_participant_disconnected(participant):
-        if participant.identity.startswith("user"):
-            print(f"=== [KareOS] User disconnected: {participant.identity} ===")
-            participant_disconnected.set()
-    
-    ctx.room.on("participant_disconnected", on_participant_disconnected)
-    
-    await participant_disconnected.wait()
-    print("=== [KareOS] USER LEFT, SHUTTING DOWN ===")
+    # 🔥 KEEP THE AGENT ALIVE – wait for the session to end (user leaves or agent ends)
+    await session.wait()
 
 
 # ========== ROOT ENDPOINT ==========
