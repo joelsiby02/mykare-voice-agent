@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState, useRef } from 'react'
-import { Room, RoomEvent, Track, RemoteParticipant } from 'livekit-client'
+import { Room, RoomEvent, Track } from 'livekit-client'
 import Header from '@/components/Header'
 import HeroSection from '@/components/HeroSection'
 import CallControls from '@/components/CallControls'
@@ -13,7 +13,6 @@ import Footer from '@/components/Footer'
 import {
   getAccessToken,
   connectToRoom,
-  setupRoomListeners,
   getCallSummary,
   ToolCall,
   CallSummary,
@@ -31,7 +30,7 @@ export default function Home() {
   const [callStatus, setCallStatus] = useState<CallStatus>('disconnected')
   const [isMuted, setIsMuted] = useState(false)
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([])
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>([])  // kept for summary
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([])
   const [summary, setSummary] = useState<CallSummary | null>(null)
   const [showSummary, setShowSummary] = useState(false)
   const [isLoadingSummary, setIsLoadingSummary] = useState(false)
@@ -41,9 +40,7 @@ export default function Home() {
   const audioRef = useRef<HTMLAudioElement>(null)
 
   const liveKitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL
-  if (!liveKitUrl) {
-    console.error('NEXT_PUBLIC_LIVEKIT_URL environment variable is not set')
-  }
+  if (!liveKitUrl) console.error('LIVEKIT_URL not set')
 
   const handleStartCall = useCallback(async () => {
     try {
@@ -55,67 +52,46 @@ export default function Home() {
       const roomName = `console-demo-${Date.now()}`
       const token = await getAccessToken(roomName, `user-${Date.now()}`)
 
-      if (!liveKitUrl) {
-        throw new Error('LiveKit URL is not configured')
-      }
+      if (!liveKitUrl) throw new Error('LiveKit URL not configured')
 
-      console.log('[Frontend] Creating room with options:', { audio: true, video: false })
       const room = await connectToRoom(liveKitUrl, token, roomName, {
         audio: true,
         video: false,
       })
 
-      if (!room) {
-        throw new Error('Failed to connect to room')
-      }
+      if (!room) throw new Error('Failed to connect')
 
       room.on(RoomEvent.Connected, () => {
-        console.log('[Frontend] ✅ Room connected successfully')
+        console.log('✅ Room connected')
         setCallStatus('connected')
       })
 
-      room.on(RoomEvent.Disconnected, (reason?: string) => {
-        console.warn('[Frontend] ⚠️ Room disconnected, reason:', reason || 'unknown')
+      room.on(RoomEvent.Disconnected, (reason) => {
+        console.warn('⚠️ Room disconnected:', reason)
         setCallStatus('disconnected')
       })
 
-      room.on(RoomEvent.Reconnecting, () => {
-        console.log('[Frontend] 🔄 Reconnecting...')
-      })
-
-      room.on(RoomEvent.Reconnected, () => {
-        console.log('[Frontend] ✅ Reconnected')
-      })
-
       room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-        console.log('[Frontend] Track subscribed:', track.kind, participant.identity, track.sid)
         if (track.kind === Track.Kind.Audio && participant.isAgent) {
-          console.log('[Frontend] Agent audio track received, playing...')
-          const audioElement = audioRef.current
-          if (audioElement) {
-            audioElement.srcObject = new MediaStream([track.mediaStreamTrack])
-            audioElement.play().catch(e => {
-              console.warn('[Frontend] Autoplay blocked, need user interaction', e)
-            })
+          console.log('🎧 Agent audio received')
+          const audioEl = audioRef.current
+          if (audioEl) {
+            audioEl.srcObject = new MediaStream([track.mediaStreamTrack])
+            audioEl.play().catch(e => console.warn('Autoplay blocked', e))
           } else {
             const newAudio = new Audio()
             newAudio.srcObject = new MediaStream([track.mediaStreamTrack])
-            newAudio.play().catch(e => console.warn('[Frontend] Autoplay blocked', e))
+            newAudio.play().catch(e => console.warn('Autoplay blocked', e))
           }
         }
       })
 
-      try {
-        await room.localParticipant.setMicrophoneEnabled(true)
-        console.log('[Frontend] Mic enabled:', room.localParticipant.isMicrophoneEnabled)
-        console.log('[Frontend] Audio publications:', room.localParticipant.audioTrackPublications)
-      } catch (micError) {
-        console.error('[Frontend] Failed to enable microphone:', micError)
-      }
+      await room.localParticipant.setMicrophoneEnabled(true)
+      console.log('🎤 Mic enabled')
 
-      // Only listen for metadata (tool calls) – no transcript listener
-      room.localParticipant.on('metadataChanged', (metadata: string) => {
-        console.log('[Frontend] 📝 Metadata changed:', metadata)
+      // ✅ Listen for agent metadata (tool calls)
+      const handleMetadata = (metadata: string) => {
+        console.log('📝 Agent metadata:', metadata)
         try {
           const payload = JSON.parse(metadata)
           const toolCall: ToolCall = {
@@ -123,24 +99,36 @@ export default function Home() {
             data: payload.extracted_data || {},
             timestamp: Date.now(),
           }
-          setToolCalls((prev) => [...prev, toolCall])
-          // Also add to transcript for summary (but not displayed)
-          setTranscript((prev) => [
+          setToolCalls(prev => [...prev, toolCall])
+          setTranscript(prev => [
             ...prev,
-            { speaker: 'System', text: `🔧 Tool called: ${toolCall.toolName}`, timestamp: Date.now() },
+            { speaker: 'System', text: `🔧 Tool: ${toolCall.toolName}`, timestamp: Date.now() },
           ])
           transcriptRef.current += `\nSystem: Tool called ${toolCall.toolName}`
-        } catch (error) {
-          console.error('[Frontend] Error parsing metadata:', error)
+        } catch (e) {
+          console.error('Metadata parse error', e)
+        }
+      }
+
+      // When a new participant (the agent) connects
+      room.on(RoomEvent.ParticipantConnected, (participant) => {
+        if (participant.isAgent) {
+          console.log('🧠 Agent joined, attaching metadata listener')
+          participant.on('metadataChanged', handleMetadata)
         }
       })
 
-      // Keep only tool calls via metadata – we don't need setupRoomListeners for transcript
-      // We already have the metadata listener above.
+      // Also check if agent is already connected (race condition)
+      // remoteParticipants is a Map, convert to array
+      const existingAgent = Array.from(room.remoteParticipants.values()).find(p => p.isAgent)
+      if (existingAgent) {
+        console.log('🧠 Agent already present, attaching listener')
+        existingAgent.on('metadataChanged', handleMetadata)
+      }
 
       roomRef.current = room
     } catch (error) {
-      console.error('[Frontend] Error starting call:', error)
+      console.error('Start call error:', error)
       setCallStatus('error')
       setTimeout(() => setCallStatus('disconnected'), 3000)
     }
@@ -149,32 +137,25 @@ export default function Home() {
   const handleEndCall = useCallback(async () => {
     try {
       setCallStatus('connecting')
-
       if (roomRef.current) {
         await roomRef.current.disconnect()
         roomRef.current = null
       }
-
       setIsLoadingSummary(true)
       try {
         const callSummary = await getCallSummary(transcriptRef.current)
         setSummary(callSummary)
         setShowSummary(true)
-      } catch (error) {
-        console.error('Error fetching summary:', error)
-        setSummary({
-          summary: 'Call ended. Summary generation failed.',
-          appointments: [],
-          timestamp: new Date().toISOString(),
-        })
+      } catch (e) {
+        console.error('Summary error', e)
+        setSummary({ summary: 'Summary generation failed.', appointments: [], timestamp: new Date().toISOString() })
         setShowSummary(true)
       } finally {
         setIsLoadingSummary(false)
       }
-
       setCallStatus('disconnected')
     } catch (error) {
-      console.error('Error ending call:', error)
+      console.error('End call error:', error)
       setCallStatus('error')
     }
   }, [])
@@ -182,9 +163,7 @@ export default function Home() {
   const handleToggleMute = useCallback(() => {
     if (roomRef.current?.localParticipant?.audioTrackPublications) {
       roomRef.current.localParticipant.audioTrackPublications.forEach((pub) => {
-        if (pub.track) {
-          pub.track.muted = !isMuted
-        }
+        if (pub.track) pub.track.muted = !isMuted
       })
       setIsMuted(!isMuted)
     }
@@ -192,9 +171,7 @@ export default function Home() {
 
   useEffect(() => {
     return () => {
-      if (roomRef.current) {
-        roomRef.current.disconnect()
-      }
+      if (roomRef.current) roomRef.current.disconnect()
     }
   }, [])
 
@@ -202,18 +179,11 @@ export default function Home() {
     <>
       <Header />
       <HeroSection />
-      <section
-        id="call-interface"
-        className="py-16 md:py-24 px-6 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800"
-      >
+      <section id="call-interface" className="py-16 md:py-24 px-6 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
-            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-white mb-4">
-              Start Your Call
-            </h2>
-            <p className="text-lg text-slate-600 dark:text-slate-400">
-              Connect with Nova and experience the future of healthcare scheduling
-            </p>
+            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-white mb-4">Start Your Call</h2>
+            <p className="text-lg text-slate-600 dark:text-slate-400">Connect with Nova and experience the future of healthcare scheduling</p>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1 space-y-6">
@@ -238,10 +208,7 @@ export default function Home() {
         <SummaryCard
           summary={summary}
           isLoading={isLoadingSummary}
-          onClose={() => {
-            setShowSummary(false)
-            setSummary(null)
-          }}
+          onClose={() => { setShowSummary(false); setSummary(null) }}
         />
       )}
       <Footer />

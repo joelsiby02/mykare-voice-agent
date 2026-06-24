@@ -73,7 +73,7 @@ export default function Footer() {
               </li>
               <li>
                 <a
-                  href="https://github.com/joelsiby"
+                  href="https://github.com/joelsiby02"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="hover:text-blue-400 transition-colors"
@@ -89,7 +89,7 @@ export default function Footer() {
             <h4 className="font-semibold text-white mb-4">Connect</h4>
             <div className="flex gap-4">
               <a
-                href="mailto:hello@joelsiby.com"
+                href="mailto:joelag1235@gmail.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-10 h-10 rounded-lg bg-slate-800 hover:bg-blue-600 flex items-center justify-center transition-colors"
@@ -107,7 +107,7 @@ export default function Footer() {
                 <Briefcase className="w-5 h-5" />
               </a>
               <a
-                href="https://github.com/joelsiby"
+                href="https://github.com/joelsiby02"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-10 h-10 rounded-lg bg-slate-800 hover:bg-blue-600 flex items-center justify-center transition-colors"

@@ -45,7 +45,7 @@ export default function HeroSection() {
                   Languages
                 </p>
                 <p className="text-2xl font-bold text-blue-600">
-                  Multi
+                  English
                 </p>
               </div>
               <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
@@ -53,7 +53,7 @@ export default function HeroSection() {
                   Accuracy
                 </p>
                 <p className="text-2xl font-bold text-blue-600">
-                  98%+
+                  90%+
                 </p>
               </div>
             </div>
