@@ -138,15 +138,26 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    # Send the greeting – use instructions= (this was working before)
+    # Send the greeting
     await session.generate_reply(
         instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
-    # 🔥 KEEP THE AGENT ALIVE until the session ends (user leaves or agent ends)
-    await session.wait()
-    print("=== [KareOS] SESSION ENDED ===")
+    # 🔥 KEEP THE AGENT ALIVE until the participant disconnects
+    # Use an event that waits for the user to leave
+    disconnect_event = asyncio.Event()
+
+    def on_participant_disconnected(participant):
+        if participant.identity.startswith("user"):
+            print(f"=== [KareOS] User disconnected: {participant.identity} ===")
+            disconnect_event.set()
+
+    ctx.room.on("participant_disconnected", on_participant_disconnected)
+
+    # Wait for the disconnect event
+    await disconnect_event.wait()
+    print("=== [KareOS] USER LEFT, SHUTTING DOWN ===")
 
 
 # ========== ROOT ENDPOINT ==========
