@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState, useRef } from 'react'
-import { Room } from 'livekit-client'
+import { Room, RoomEvent, Track } from 'livekit-client'
 import Header from '@/components/Header'
 import HeroSection from '@/components/HeroSection'
 import CallControls from '@/components/CallControls'
@@ -38,6 +38,7 @@ export default function Home() {
 
   const roomRef = useRef<Room | null>(null)
   const transcriptRef = useRef<string>('')
+  const audioRef = useRef<HTMLAudioElement>(null)
 
   const liveKitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL
   if (!liveKitUrl) {
@@ -51,15 +52,14 @@ export default function Home() {
       setTranscript([])
       transcriptRef.current = ''
 
-      // Room name must match a pattern that has a dispatch rule.
-      // Use 'console-demo' – we'll keep it consistent.
-      const roomName = 'console-demo'
+      const roomName = `console-demo-${Date.now()}`
       const token = await getAccessToken(roomName, `user-${Date.now()}`)
 
       if (!liveKitUrl) {
         throw new Error('LiveKit URL is not configured')
       }
 
+      console.log('[Frontend] Creating room with options:', { audio: true, video: false })
       const room = await connectToRoom(liveKitUrl, token, roomName, {
         audio: true,
         video: false,
@@ -69,15 +69,60 @@ export default function Home() {
         throw new Error('Failed to connect to room')
       }
 
-      // 🔧 FIX: Enable microphone explicitly and log
-      await room.localParticipant.setMicrophoneEnabled(true)
-      console.log('[Mic] enabled:', room.localParticipant.isMicrophoneEnabled)
-      console.log('[Mic] Audio publications:', room.localParticipant.audioTrackPublications)
+      // --- Event listeners for debugging ---
+      room.on(RoomEvent.Connected, () => {
+        console.log('[Frontend] ✅ Room connected successfully')
+        setCallStatus('connected')
+      })
 
+      room.on(RoomEvent.Disconnected, (reason?: string) => {
+        console.warn('[Frontend] ⚠️ Room disconnected, reason:', reason || 'unknown')
+        setCallStatus('disconnected')
+      })
+
+      room.on(RoomEvent.Reconnecting, () => {
+        console.log('[Frontend] 🔄 Reconnecting...')
+      })
+
+      room.on(RoomEvent.Reconnected, () => {
+        console.log('[Frontend] ✅ Reconnected')
+      })
+
+      // Listen for when the agent publishes audio
+      room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        console.log('[Frontend] Track subscribed:', track.kind, participant.identity, track.sid)
+        if (track.kind === Track.Kind.Audio && participant.isAgent) {
+          console.log('[Frontend] Agent audio track received, playing...')
+          const audioElement = audioRef.current
+          if (audioElement) {
+            audioElement.srcObject = new MediaStream([track.mediaStreamTrack])
+            audioElement.play().catch(e => {
+              console.warn('[Frontend] Autoplay blocked, need user interaction', e)
+            })
+          } else {
+            // fallback
+            const newAudio = new Audio()
+            newAudio.srcObject = new MediaStream([track.mediaStreamTrack])
+            newAudio.play().catch(e => console.warn('[Frontend] Autoplay blocked', e))
+          }
+        }
+      })
+
+      // Enable microphone
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true)
+        console.log('[Frontend] Mic enabled:', room.localParticipant.isMicrophoneEnabled)
+        console.log('[Frontend] Audio publications:', room.localParticipant.audioTrackPublications)
+      } catch (micError) {
+        console.error('[Frontend] Failed to enable microphone:', micError)
+        // Continue anyway
+      }
+
+      // Setup tool call and transcript listeners
       setupRoomListeners(
         room,
         (toolCall: ToolCall) => {
-          console.log('Tool call received:', toolCall)
+          console.log('[Frontend] Tool call received:', toolCall)
           setToolCalls((prev) => [...prev, toolCall])
           setTranscript((prev) => [
             ...prev,
@@ -85,7 +130,7 @@ export default function Home() {
           ])
         },
         (speaker: string, text: string) => {
-          console.log(`${speaker}: ${text}`)
+          console.log(`[Frontend] ${speaker}: ${text}`)
           const entry: TranscriptEntry = { speaker, text, timestamp: Date.now() }
           setTranscript((prev) => [...prev, entry])
           transcriptRef.current += `\n${speaker}: ${text}`
@@ -93,9 +138,9 @@ export default function Home() {
       )
 
       roomRef.current = room
-      setCallStatus('connected')
+      // Status will be updated by the 'Connected' event
     } catch (error) {
-      console.error('Error starting call:', error)
+      console.error('[Frontend] Error starting call:', error)
       setCallStatus('error')
       setTimeout(() => setCallStatus('disconnected'), 3000)
     }
@@ -200,6 +245,8 @@ export default function Home() {
         />
       )}
       <Footer />
+      {/* Hidden audio element for remote audio */}
+      <audio ref={audioRef} autoPlay style={{ display: 'none' }} />
     </>
   )
 }

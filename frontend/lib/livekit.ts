@@ -49,6 +49,7 @@ export async function getAccessToken(
     }
 
     const { token } = await response.json()
+    console.log('[LiveKit] Token received, length:', token.length)
     return token
   } catch (error) {
     console.error('Error getting access token:', error)
@@ -81,10 +82,12 @@ export async function connectToRoom(
 ): Promise<Room> {
   const room = new Room(options)
   try {
+    console.log('[LiveKit] Connecting to room', roomName, 'at', url)
     await room.connect(url, token)
+    console.log('[LiveKit] Connected successfully')
     return room
   } catch (error) {
-    console.error('Failed to connect to LiveKit room:', error)
+    console.error('[LiveKit] Failed to connect:', error)
     throw error
   }
 }
@@ -96,18 +99,19 @@ export function setupRoomListeners(
   onParticipantUpdate?: (participant: Participant) => void
 ): void {
   room.on(RoomEvent.ParticipantConnected, (participant: Participant) => {
-    console.log('Participant connected:', participant.identity)
+    console.log('[LiveKit] Participant connected:', participant.identity)
     onParticipantUpdate?.(participant)
   })
 
   room.on(RoomEvent.ParticipantDisconnected, (participant: Participant) => {
-    console.log('Participant disconnected:', participant.identity)
+    console.log('[LiveKit] Participant disconnected:', participant.identity)
   })
 
   // Listen to metadata from the agent (tool calls)
   room.localParticipant.on('metadataChanged', (metadata: string) => {
     try {
       const payload = JSON.parse(metadata)
+      console.log('[LiveKit] Metadata updated:', payload)
       const toolCall: ToolCall = {
         toolName: payload.intent || 'unknown',
         data: payload.extracted_data || {},
@@ -115,7 +119,7 @@ export function setupRoomListeners(
       }
       onToolCall(toolCall)
     } catch (error) {
-      console.error('Error parsing metadata:', error)
+      console.error('[LiveKit] Error parsing metadata:', error)
     }
   })
 
@@ -124,10 +128,11 @@ export function setupRoomListeners(
       const decoder = new TextDecoder()
       const data = JSON.parse(decoder.decode(payload))
       if (data.type === 'transcript') {
+        console.log('[LiveKit] Transcript received:', data.speaker, data.text)
         onTranscript(data.speaker, data.text)
       }
     } catch (error) {
-      console.error('Error parsing data channel message:', error)
+      console.error('[LiveKit] Error parsing data channel message:', error)
     }
   })
 }
@@ -138,6 +143,6 @@ export function sendDataToRoom(room: Room, data: any): void {
     const payload = encoder.encode(JSON.stringify(data))
     room.localParticipant.publishData(payload, DataPacket_Kind.LOSSY)
   } catch (error) {
-    console.error('Error sending data to room:', error)
+    console.error('[LiveKit] Error sending data to room:', error)
   }
 }
