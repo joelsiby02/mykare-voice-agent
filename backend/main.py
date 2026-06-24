@@ -154,9 +154,9 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     session.on("agent_response", on_agent_response)
 
-    # Send the greeting – this will also trigger agent_response
-    await agent.generate_reply(
-        instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
+    # ✅ FIX: Use session.generate_reply with text= instead of instructions=
+    await session.generate_reply(
+        text="Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
