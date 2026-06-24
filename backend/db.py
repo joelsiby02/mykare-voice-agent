@@ -82,6 +82,7 @@ class HealthcareTools:
                                 date: str = "None", time: str = "None"):
         """Stream real-time extracted data to the frontend via metadata."""
         if not self.room:
+            print("⚠️ _publish_metadata_state: self.room is None -> metadata not published")
             return
         payload = {
             "intent": intent,
@@ -93,8 +94,11 @@ class HealthcareTools:
             }
         }
         try:
+            print(f"📤 Publishing metadata: {payload}")
             self.room.local_participant.publish_metadata(json.dumps(payload))
+            print("✅ Metadata published successfully")
         except Exception as e:
+            print(f"❌ Failed to publish metadata: {e}")
             logger.error(f"Failed to publish track metadata: {e}")
 
     async def identify_user(self, phone: str) -> str:
