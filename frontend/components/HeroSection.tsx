@@ -1,6 +1,15 @@
+import { useState } from 'react'
 import { Play } from 'lucide-react'
 
 export default function HeroSection() {
+  const [isPlaying, setIsPlaying] = useState(false)
+
+  // Replace this with your actual YouTube Embed ID (the characters after v=)
+  // Your exact YouTube video configuration string
+   const videoId = "UnPZedLGgy4";
+   const embedUrl = `https://youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+
+
   return (
     <section className="bg-gradient-to-b from-blue-50 to-white dark:from-slate-900 dark:to-slate-950 py-16 md:py-24 px-6">
       <div className="max-w-6xl mx-auto">
@@ -69,35 +78,51 @@ export default function HeroSection() {
               >
                 Try Nova Now
               </button>
-              <button className="px-8 py-3 border-2 border-blue-600 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 font-semibold rounded-lg transition-colors">
+              <button 
+                onClick={() => setIsPlaying(true)}
+                className="px-8 py-3 border-2 border-blue-600 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 font-semibold rounded-lg transition-colors"
+              >
                 Watch Demo
               </button>
             </div>
           </div>
 
-          {/* Right Column - Video */}
+          {/* Right Column - Video Player & Image Overlay */}
           <div className="relative aspect-video bg-slate-200 dark:bg-slate-800 rounded-xl overflow-hidden shadow-xl border border-slate-300 dark:border-slate-700">
-            <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-300 to-slate-400 dark:from-slate-700 dark:to-slate-800">
-              <div className="text-center space-y-4">
-                <div className="w-24 h-24 bg-white dark:bg-slate-900 rounded-full flex items-center justify-center mx-auto shadow-lg">
-                  <Play className="w-10 h-10 text-blue-600 ml-1" />
+            {!isPlaying ? (
+              <div 
+                className="absolute inset-0 cursor-pointer group"
+                onClick={() => setIsPlaying(true)}
+              >
+                {/* Background Image Placeholder */}
+                <img
+                  src="/nova.jpg" 
+                  alt="Nova Healthcare AI Demo Thumbnail"
+                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                />
+                
+                {/* Styled Information & Action Layer */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30 group-hover:bg-black/50 transition-colors p-4 text-center">
+                  <div className="w-24 h-24 bg-white dark:bg-slate-900 rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 group-hover:bg-blue-600 transition-all duration-300">
+                    <Play className="w-10 h-10 text-blue-600 ml-1 group-hover:text-white transition-colors" />
+                  </div>
+                  <p className="text-white font-semibold mt-4 text-lg drop-shadow-md">
+                    2-Minute Walkthrough
+                  </p>
+                  <p className="text-sm text-slate-200 drop-shadow-md">
+                    Click to watch Nova in action
+                  </p>
                 </div>
-                <p className="text-white font-semibold">
-                  2-Minute Walkthrough
-                </p>
-                <p className="text-sm text-slate-200">
-                  Click to watch Maya in action
-                </p>
               </div>
-            </div>
-            {/* Placeholder iframe - replace src with your video URL */}
-            <iframe
-              className="w-full h-full hidden"
-              src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0"
-              title="Nova Healthcare AI Demo"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
+            ) : (
+              <iframe
+                className="w-full h-full"
+                src={embedUrl}
+                title="Nova Healthcare AI Demo"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+              />
+            )}
           </div>
         </div>
       </div>
