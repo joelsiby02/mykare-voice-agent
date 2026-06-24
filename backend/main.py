@@ -138,8 +138,8 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    # Send the greeting
-    await agent.generate_reply(
+    # ✅ CORRECT: Use session.generate_reply, not agent.generate_reply
+    await session.generate_reply(
         instructions="Say: Hello, welcome to Mykare Health. I am Nova, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
@@ -189,7 +189,7 @@ async def fetch_access_token(room: str, identity: str):
     return {"token": token.to_jwt()}
 
 
-# ========== SUMMARY ENDPOINT (ENHANCED) ==========
+# ========== SUMMARY ENDPOINT ==========
 @app.post("/api/summary")
 async def generate_summary(request: Request):
     data = await request.json()
@@ -216,7 +216,6 @@ async def generate_summary(request: Request):
     elif "view" in transcript.lower() or "check" in transcript.lower():
         intent = "retrieve"
 
-    # Build structured summary
     summary_lines = []
     summary_lines.append("📋 **CALL SUMMARY**")
     summary_lines.append(f"🕐 **Timestamp:** {datetime.now().strftime('%Y-%m-%d %I:%M %p')}")
@@ -241,7 +240,7 @@ async def generate_summary(request: Request):
 
     summary_text = "\n".join(summary_lines)
 
-    # Build appointments list for the modal
+    # Build appointments list
     appointments = []
     if date_match and time_match:
         appointments.append({
