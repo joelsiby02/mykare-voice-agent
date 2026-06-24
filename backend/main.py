@@ -15,7 +15,7 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, deepgram, cartesia
 
-# Import your tools (ensure these are plain async functions or callable tools)
+# Import your tools
 from tools import (
     identify_user,
     register_user,
@@ -49,7 +49,6 @@ server = AgentServer()
 
 class MayaHealthcareAgent(Agent):
     def __init__(self):
-        # ---- NATURAL FLOW: dynamic date and conversational pacing ----
         # Force IST date for accurate "today" references
         utc_now = datetime.now(timezone.utc)
         ist_offset = timedelta(hours=5, minutes=30)
@@ -67,13 +66,11 @@ class MayaHealthcareAgent(Agent):
             "- Account Lookup: Once they ask to book, view, or change an appointment, seamlessly pivot and ask for their mobile number to check their account record.\n"
             "- Business Hour Validation: If a user selects a time outside our opening hours, or if a database tool logs an output error or slot 'REJECTION', "
             "read the tool response directly, explain the specific issue to the patient naturally, and pivot to assist them with an alternative available choice.\n\n"
-            
             "OPERATIONAL WORKFLOW CHECKLIST:\n"
             "1. Greet the patient and ask how you can help them.\n"
             "2. When a tool action is implied, collect their phone number and run 'identify_user'. If missing from the database, call 'register_user'.\n"
             "3. Process slot lookups or booking mutations through your functional layer.\n"
             "4. Invoke 'end_conversation' only when they explicitly signal they are completely finished.\n\n"
-
             "--- CANCELLATION & MODIFICATION WORKFLOW (CRITICAL) ---\n"
             "When a patient asks to cancel or modify an appointment:\n"
             "   a) First call 'retrieve_appointments' with their phone number to fetch all their bookings.\n"
@@ -81,7 +78,6 @@ class MayaHealthcareAgent(Agent):
             "   c) If multiple appointments exist, ask the patient to specify which one (by date/time) they want to change.\n"
             "   d) Once you have the specific appointment ID, call 'cancel_appointment(appointment_id)' or 'modify_appointment(appointment_id, new_date, new_time)'.\n"
             "   e) Never guess or invent an appointment ID – always obtain it from the retrieval result.\n\n"
-            
             "CONSTRAINTS:\n"
             "- Keep voice responses under two short sentences to ensure sub-second latency."
         )
@@ -128,28 +124,47 @@ async def mykare_voice_entrypoint(ctx: JobContext):
 
     print("=== [KareOS] SESSION STARTED ===")
 
-    # Updated greeting: warm, open, and not immediately asking for phone number
     await session.generate_reply(
         instructions="Say: Hello, welcome to Mykare Health. I am Maya, your automated care coordinator. How can I help you today?"
     )
     print("=== [KareOS] GREETING SENT ===")
 
 
+# ========== FIXED TOKEN ENDPOINT ==========
+from livekit import api
+
 @app.get("/api/token")
 async def fetch_access_token(room: str, identity: str):
-    from livekit import api
     token_generator = api.AccessToken(
         os.getenv("LIVEKIT_API_KEY"),
         os.getenv("LIVEKIT_API_SECRET")
     ).with_identity(identity).with_name(identity).with_grants(
-        api.VideoGrants(room_join=True, room=room)
+        api.VideoGrants(
+            room_join=True,
+            room=room,
+            # CRITICAL: This tells LiveKit to dispatch the "maya" agent
+            room_config=api.RoomConfiguration(
+                agents=[api.RoomAgentConfiguration(agent_name="maya")]
+            )
+        )
     )
     return {"token": token_generator.to_jwt()}
 
 
+from fastapi import Request
+
+@app.post("/api/summary")
+async def generate_summary(request: Request):
+    data = await request.json()
+    transcript = data.get("transcript", "")
+    return {
+        "summary": f"Call ended. Transcript preview: {transcript[:100]}...",
+        "appointments": [],
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 if __name__ == "__main__":
-    # Add a debug print to confirm we reach this block
     print("=== Starting LiveKit Agent Server (main) ===")
     os.environ["LIVEKIT_PORT"] = "8082"
-    # cli.run_app will parse sys.argv; if you pass "start", it will start the server
     cli.run_app(server)
