@@ -120,7 +120,13 @@ async def mykare_voice_entrypoint(ctx: JobContext):
         llm=openai.LLM(
             model="gpt-4o-mini",
         ),
-        tts=cartesia.TTS(),
+        # tts=cartesia.TTS(
+
+        # ),
+        tts=openai.TTS(
+        model="tts-1",
+        voice="alloy" # Options: alloy, echo, fable, onyx, nova, shimmer
+    ),
     )
 
     print("=== [KareOS] STARTING SESSION ===")

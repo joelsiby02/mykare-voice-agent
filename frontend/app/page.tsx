@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState, useRef } from 'react'
-import { Room, RoomEvent, Track } from 'livekit-client'
+import { Room, RoomEvent, Track, RemoteParticipant } from 'livekit-client'
 import Header from '@/components/Header'
 import HeroSection from '@/components/HeroSection'
 import CallControls from '@/components/CallControls'
@@ -118,11 +118,46 @@ export default function Home() {
         // Continue anyway
       }
 
-      // Setup tool call and transcript listeners
+      // --- DEBUG: Listen for any raw data coming from the agent ---
+      room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant: RemoteParticipant) => {
+        try {
+          const decoder = new TextDecoder()
+          const data = JSON.parse(decoder.decode(payload))
+          console.log('[Frontend] 📨 Data received (raw):', data)
+          // If the data has a type 'transcript', we'll handle it in the setupRoomListeners,
+          // but we can also forward it here if needed.
+        } catch (error) {
+          console.error('[Frontend] Error parsing data channel message:', error)
+        }
+      })
+
+      // Also log metadata changes directly
+      room.localParticipant.on('metadataChanged', (metadata: string) => {
+        console.log('[Frontend] 📝 Metadata changed (raw):', metadata)
+        // The setupRoomListeners will also handle this, but we log it here for visibility.
+        try {
+          const payload = JSON.parse(metadata)
+          const toolCall: ToolCall = {
+            toolName: payload.intent || 'unknown',
+            data: payload.extracted_data || {},
+            timestamp: Date.now(),
+          }
+          // Update UI directly (also done in setupRoomListeners, but this is extra)
+          setToolCalls((prev) => [...prev, toolCall])
+          setTranscript((prev) => [
+            ...prev,
+            { speaker: 'System', text: `🔧 Tool called: ${toolCall.toolName}`, timestamp: Date.now() },
+          ])
+        } catch (error) {
+          console.error('[Frontend] Error parsing metadata:', error)
+        }
+      })
+
+      // Setup the official listeners (tool calls and transcript)
       setupRoomListeners(
         room,
         (toolCall: ToolCall) => {
-          console.log('[Frontend] Tool call received:', toolCall)
+          console.log('[Frontend] Tool call received (from setup):', toolCall)
           setToolCalls((prev) => [...prev, toolCall])
           setTranscript((prev) => [
             ...prev,
@@ -130,7 +165,7 @@ export default function Home() {
           ])
         },
         (speaker: string, text: string) => {
-          console.log(`[Frontend] ${speaker}: ${text}`)
+          console.log(`[Frontend] Transcript: ${speaker}: ${text}`)
           const entry: TranscriptEntry = { speaker, text, timestamp: Date.now() }
           setTranscript((prev) => [...prev, entry])
           transcriptRef.current += `\n${speaker}: ${text}`
@@ -245,7 +280,7 @@ export default function Home() {
         />
       )}
       <Footer />
-      {/* Hidden audio element for remote audio */}
+      {/* Hidden audio element for agent audio */}
       <audio ref={audioRef} autoPlay style={{ display: 'none' }} />
     </>
   )
