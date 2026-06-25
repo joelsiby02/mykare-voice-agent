@@ -27,7 +27,7 @@ Nova is a production-oriented AI voice receptionist built for healthcare appoint
 | Appointment Modification       | ✅ Working |
 | Appointment Retrieval          | ✅ Working |
 | Call Summary Generation        | ❌ Not Working |
-| Real-Time Tool Call Updates    | ❌ Working |
+| Real-Time Tool Call Updates    | ❌ Not Working |
 | Responsive UI                  | ✅ Working |
 | Animated Voice Avatar          | ❌ Not Working |
 
